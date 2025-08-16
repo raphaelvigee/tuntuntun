@@ -24,8 +24,8 @@ func (c *Conn) Write(b []byte) (int, error) {
 	return c.conn.Write(b)
 }
 
-func Forward(opener tuntuntun.Opener, remoteAddr, localAddr string) error {
-	f := NewForwarder(opener)
+func RemoteForward(opener tuntuntun.Opener, remoteAddr, localAddr string) error {
+	f := NewRemoteForwarder(opener)
 
 	err := f.Start(remoteAddr, localAddr)
 	if err != nil {
@@ -37,20 +37,20 @@ func Forward(opener tuntuntun.Opener, remoteAddr, localAddr string) error {
 	return nil
 }
 
-type Forwarder struct {
+type RemoteForwarder struct {
 	opener tuntuntun.Opener
 
 	listener net.Listener
 	doneCh   chan struct{}
 }
 
-func NewForwarder(opener tuntuntun.Opener) *Forwarder {
-	return &Forwarder{
+func NewRemoteForwarder(opener tuntuntun.Opener) *RemoteForwarder {
+	return &RemoteForwarder{
 		opener: opener,
 	}
 }
 
-func (f *Forwarder) Start(remoteAddr, localAddr string) error {
+func (f *RemoteForwarder) Start(remoteAddr, localAddr string) error {
 	l, err := net.Listen("tcp", localAddr)
 	if err != nil {
 		return err
@@ -81,10 +81,10 @@ func (f *Forwarder) Start(remoteAddr, localAddr string) error {
 	return err
 }
 
-func (f *Forwarder) handleConn(ctx context.Context, lconn net.Conn, remoteAddr string) {
+func (f *RemoteForwarder) handleConn(ctx context.Context, lconn net.Conn, remoteAddr string) {
 	defer lconn.Close()
 
-	rconn, err := DialContext(ctx, f.opener, remoteAddr)
+	rconn, err := RemoteDialContext(ctx, f.opener, remoteAddr)
 	if err != nil {
 		fmt.Println("fwd dial:", err)
 		return
@@ -94,7 +94,7 @@ func (f *Forwarder) handleConn(ctx context.Context, lconn net.Conn, remoteAddr s
 	tuntuntun.BidiCopy(rconn, lconn)
 }
 
-func (f *Forwarder) LocalAddr() net.Addr {
+func (f *RemoteForwarder) LocalAddr() net.Addr {
 	if f.listener == nil {
 		return nil
 	}
@@ -102,7 +102,7 @@ func (f *Forwarder) LocalAddr() net.Addr {
 	return f.listener.Addr()
 }
 
-func (f *Forwarder) Close() error {
+func (f *RemoteForwarder) Close() error {
 	if f.listener == nil {
 		return nil
 	}
@@ -110,6 +110,6 @@ func (f *Forwarder) Close() error {
 	return f.listener.Close()
 }
 
-func (f *Forwarder) Wait() <-chan struct{} {
+func (f *RemoteForwarder) Wait() <-chan struct{} {
 	return f.doneCh
 }

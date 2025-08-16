@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,17 +13,17 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type E2EForwarderSuite struct {
+type RemoteForwarderSuite struct {
 	suite.Suite
 
 	fwdTargetAddr string
 }
 
-func TestE2EForwarder(t *testing.T) {
-	suite.Run(t, new(E2EForwarderSuite))
+func TestRemoteForwarder(t *testing.T) {
+	suite.Run(t, new(RemoteForwarderSuite))
 }
 
-func (suite *E2EForwarderSuite) setupTargetServer() {
+func (suite *RemoteForwarderSuite) setupTargetServer() {
 	suite.T().Helper()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,10 +34,14 @@ func (suite *E2EForwarderSuite) setupTargetServer() {
 	suite.fwdTargetAddr = srv.Listener.Addr().String()
 }
 
-func (suite *E2EForwarderSuite) setupServer(factory func(handler tuntuntun.Handler) http.Handler, mux bool) *httptest.Server {
+func (suite *RemoteForwarderSuite) setupServer(factory func(handler tuntuntun.Handler) http.Handler, mux bool) *httptest.Server {
 	suite.T().Helper()
 
-	var tth tuntuntun.Handler = tuntunfwd.NewServer()
+	var tth tuntuntun.Handler = tuntunfwd.NewServer(tuntunfwd.ServerConfig{
+		AllowServerForward: func(ctx context.Context, addr string) error {
+			return nil
+		},
+	})
 	if mux {
 		tth = tuntunmux.NewServer(tth)
 	}
@@ -51,11 +56,11 @@ func (suite *E2EForwarderSuite) setupServer(factory func(handler tuntuntun.Handl
 	return srv
 }
 
-func (suite *E2EForwarderSuite) SetupTest() {
+func (suite *RemoteForwarderSuite) SetupTest() {
 	suite.setupTargetServer()
 }
 
-func (suite *E2EForwarderSuite) suiteRunSanity(tt Setup, mux bool) {
+func (suite *RemoteForwarderSuite) suiteRunSanity(tt Setup, mux bool) {
 	srv := suite.setupServer(tt.Server, mux)
 
 	opener := tt.Opener(srv.URL)
@@ -67,7 +72,7 @@ func (suite *E2EForwarderSuite) suiteRunSanity(tt Setup, mux bool) {
 		opener = ttm
 	}
 
-	f := tuntunfwd.NewForwarder(opener)
+	f := tuntunfwd.NewRemoteForwarder(opener)
 
 	err := f.Start(suite.fwdTargetAddr, ":0")
 	suite.Require().NoError(err)
@@ -84,17 +89,13 @@ func (suite *E2EForwarderSuite) suiteRunSanity(tt Setup, mux bool) {
 	suite.Assert().Equal("hello", string(body))
 }
 
-func (suite *E2EForwarderSuite) TestSanity() {
+func (suite *RemoteForwarderSuite) TestSanity() {
 	for name, tt := range setup {
-		if name == "h2" {
-			continue
-		}
-
 		suite.Run(name, func() {
 			suite.suiteRunSanity(tt, false)
 		})
 
-		//continue
+		continue
 		suite.Run(name+"+mux", func() {
 			suite.suiteRunSanity(tt, true)
 		})

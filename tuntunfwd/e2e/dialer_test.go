@@ -14,17 +14,17 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type E2EDialerSuite struct {
+type DialerSuite struct {
 	suite.Suite
 
 	fwdTargetUrl string
 }
 
-func TestE2EDialer(t *testing.T) {
-	suite.Run(t, new(E2EDialerSuite))
+func TestDialer(t *testing.T) {
+	suite.Run(t, new(DialerSuite))
 }
 
-func (suite *E2EDialerSuite) setupTargetServer() {
+func (suite *DialerSuite) setupTargetServer() {
 	suite.T().Helper()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,10 +37,14 @@ func (suite *E2EDialerSuite) setupTargetServer() {
 	suite.fwdTargetUrl = srv.URL
 }
 
-func (suite *E2EDialerSuite) setupServer(factory func(handler tuntuntun.Handler) http.Handler, mux bool) *httptest.Server {
+func (suite *DialerSuite) setupServer(factory func(handler tuntuntun.Handler) http.Handler, mux bool) *httptest.Server {
 	suite.T().Helper()
 
-	var tth tuntuntun.Handler = tuntunfwd.NewServer()
+	var tth tuntuntun.Handler = tuntunfwd.NewServer(tuntunfwd.ServerConfig{
+		AllowServerForward: func(ctx context.Context, addr string) error {
+			return nil
+		},
+	})
 	if mux {
 		tth = tuntunmux.NewServer(tth)
 	}
@@ -55,11 +59,11 @@ func (suite *E2EDialerSuite) setupServer(factory func(handler tuntuntun.Handler)
 	return srv
 }
 
-func (suite *E2EDialerSuite) SetupTest() {
+func (suite *DialerSuite) SetupTest() {
 	suite.setupTargetServer()
 }
 
-func (suite *E2EDialerSuite) suiteRunSanity(tt Setup, mux bool) {
+func (suite *DialerSuite) suiteRunSanity(tt Setup, mux bool) {
 	srv := suite.setupServer(tt.Server, mux)
 
 	opener := tt.Opener(srv.URL)
@@ -75,7 +79,7 @@ func (suite *E2EDialerSuite) suiteRunSanity(tt Setup, mux bool) {
 
 	client := &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, network string, addr string) (net.Conn, error) {
-			return tuntunfwd.DialContext(ctx, opener, addr)
+			return tuntunfwd.RemoteDialContext(ctx, opener, addr)
 		},
 	}}
 
@@ -91,15 +95,11 @@ func (suite *E2EDialerSuite) suiteRunSanity(tt Setup, mux bool) {
 	suite.Assert().Equal("hello", string(body))
 }
 
-func (suite *E2EDialerSuite) TestSanity() {
+func (suite *DialerSuite) TestSanity() {
 	for name, tt := range setup {
-		if name == "h2" {
-			//continue
-		}
-
-		//suite.Run(name, func() {
-		//	suite.suiteRunSanity(tt, false)
-		//})
+		suite.Run(name, func() {
+			suite.suiteRunSanity(tt, false)
+		})
 
 		suite.Run(name+"+mux", func() {
 			suite.suiteRunSanity(tt, true)
