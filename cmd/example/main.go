@@ -9,10 +9,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"tuntuntun"
 	"tuntuntun/tuntunfwd"
 	"tuntuntun/tuntunh2"
+	"tuntuntun/tuntunhttp"
 	"tuntuntun/tuntunmux"
 	"tuntuntun/tuntunws"
 
@@ -34,15 +37,25 @@ func main() {
 		transport := flag.String("transport", "h2", "http transport [h2, ws]")
 		remoteAddr := flag.String("remote-addr", "", "remote address to bind")
 		localAddr := flag.String("local-addr", "", "local address to bind")
+		name := flag.String("name", strings.Join(args, " "), "connection name")
 		mux := flag.Bool("mux", true, "enable mux")
 		flag.CommandLine.Parse(args[1:])
+
+		u, err := url.Parse(*addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		q := u.Query()
+		q.Set("name", *name)
+		u.RawQuery = q.Encode()
 
 		var opener tuntuntun.Opener
 		switch *transport {
 		case "h2":
-			opener = tuntunh2.NewClient(*addr)
+			opener = tuntunh2.NewClient(u.String())
 		case "ws":
-			opener = tuntunws.NewClient(*addr)
+			opener = tuntunws.NewClient(u.String())
 		default:
 			log.Fatal(fmt.Sprintf("unknown transport %q", *transport))
 		}
@@ -83,14 +96,16 @@ func main() {
 			OnClientForward: func(ctx context.Context, conn io.ReadWriteCloser) error {
 				defer conn.Close()
 
-				fmt.Println("Connected...")
-
 				l, err := net.Listen("tcp4", ":0")
 				if err != nil {
 					return err
 				}
 
-				fmt.Println("Listening on ", l.Addr())
+				req := tuntunhttp.RequestFromContext(ctx)
+
+				name := req.URL.Query().Get("name")
+
+				fmt.Printf("[%v] Listening on %v\n", name, l.Addr())
 
 				lconn, err := l.Accept()
 				if err != nil {
@@ -110,15 +125,21 @@ func main() {
 		var httpHandler http.Handler
 		switch *transport {
 		case "h2":
-			h2s := &http2.Server{
-				MaxConcurrentStreams: 250,
-			}
-
-			httpHandler = h2c.NewHandler(tuntunh2.NewServer(handler), h2s)
+			httpHandler = tuntunh2.NewServer(handler)
 		case "ws":
 			httpHandler = tuntunws.NewServer(handler)
 		default:
 			log.Fatal(fmt.Sprintf("unknown transport %q", *transport))
+		}
+
+		httpHandler = tuntunhttp.Middleware(httpHandler)
+
+		if *transport == "h2" {
+			h2s := &http2.Server{
+				MaxConcurrentStreams: 250,
+			}
+
+			httpHandler = h2c.NewHandler(httpHandler, h2s)
 		}
 
 		err := http.ListenAndServe(*addr, httpHandler)
