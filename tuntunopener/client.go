@@ -19,6 +19,8 @@ type Client struct {
 
 	requestIdc     atomic.Uint64
 	forwardRequest chan forwardRequest
+
+	ready chan struct{}
 }
 
 type forwardRequest struct {
@@ -29,6 +31,7 @@ func NewClient(opener tuntuntun.Opener, handler Handler) *Client {
 	return &Client{
 		opener:  opener,
 		handler: handler,
+		ready:   make(chan struct{}),
 	}
 }
 
@@ -75,6 +78,7 @@ func (h *Client) Run(ctx context.Context) error {
 	}
 
 	h.peerId = msg.InitResponse.PeerID
+	close(h.ready)
 
 	var g errgroup.Group
 	g.Go(func() error {
@@ -87,23 +91,25 @@ func (h *Client) Run(ctx context.Context) error {
 	return g.Wait()
 }
 
-func (h *Client) Open(ctx context.Context) (io.ReadWriteCloser, error) {
+func (h *Client) Open(ctx context.Context, handler Handler) error {
 	conn, err := h.opener.Open(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	err = WriteConnInit(conn, ConnTypeTun)
 	if err != nil {
-		return nil, err
+		return err
 	}
+
+	<-h.ready
 
 	err = WriteTunInit(conn, h.peerId, 0)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return conn, nil
+	return handler.ServeConn(ctx, conn)
 }
 
 func (h *Client) runReader(ctx context.Context, controlConn io.ReadWriteCloser) error {
