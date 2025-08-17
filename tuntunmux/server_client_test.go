@@ -15,6 +15,7 @@ import (
 func TestSanity(t *testing.T) {
 	l, err := net.Listen("tcp", ":0")
 	require.NoError(t, err)
+	defer l.Close()
 
 	go func() {
 		srv := NewServer(tuntuntun.HandlerFunc(func(ctx context.Context, conn io.ReadWriteCloser) error {
@@ -31,7 +32,9 @@ func TestSanity(t *testing.T) {
 
 		for {
 			conn, err := l.Accept()
-			require.NoError(t, err)
+			if err != nil {
+				return
+			}
 
 			go func() {
 				defer conn.Close()
@@ -65,6 +68,7 @@ func TestSanity(t *testing.T) {
 func TestStress(t *testing.T) {
 	l, err := net.Listen("tcp", ":0")
 	require.NoError(t, err)
+	defer l.Close()
 
 	go func() {
 		srv := NewServer(tuntuntun.HandlerFunc(func(ctx context.Context, conn io.ReadWriteCloser) error {
@@ -81,7 +85,9 @@ func TestStress(t *testing.T) {
 
 		for {
 			conn, err := l.Accept()
-			require.NoError(t, err)
+			if err != nil {
+				return
+			}
 
 			go func() {
 				defer conn.Close()

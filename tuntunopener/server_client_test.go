@@ -51,7 +51,9 @@ func TestServerOpenSanity(t *testing.T) {
 	go func() {
 		for {
 			c, err := l.Accept()
-			require.NoError(t, err)
+			if err != nil {
+				return
+			}
 
 			go func() {
 				defer c.Close()
@@ -128,7 +130,9 @@ func TestClientOpenSanity(t *testing.T) {
 	go func() {
 		for {
 			c, err := l.Accept()
-			require.NoError(t, err)
+			if err != nil {
+				return
+			}
 
 			go func() {
 				defer c.Close()
