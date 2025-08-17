@@ -35,7 +35,7 @@ func main() {
 	case "client":
 		addr := flag.String("addr", "https://localhost:1234", "server address")
 		transport := flag.String("transport", "h2", "http transport [h2, ws]")
-		mux := flag.Bool("mux", true, "enable mux")
+		mux := flag.Bool("mux", false, "enable mux")
 		flag.CommandLine.Parse(args[1:])
 
 		u, err := url.Parse(*addr)
@@ -95,7 +95,7 @@ func main() {
 		allowForward := flag.Bool("allow-forward", false, "allow forwarding request")
 		remoteAddrs := flag.String("remote-addrs", "", "comma-separated addresses to request forwarding")
 		transport := flag.String("transport", "h2", "http transport [h2, ws]")
-		mux := flag.Bool("mux", true, "enable mux")
+		mux := flag.Bool("mux", false, "enable mux")
 		flag.CommandLine.Parse(args[1:])
 
 		var handler tuntuntun.Handler = tuntunfwd2.NewServer(func() (tuntunopener.PeerHandler, error) {
