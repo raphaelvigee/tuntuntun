@@ -6,6 +6,17 @@ import (
 	"sync"
 )
 
+func closeWrite(c io.ReadWriteCloser) {
+	type closeWriter interface {
+		CloseWrite() error
+	}
+	if cw, ok := c.(closeWriter); ok {
+		_ = cw.CloseWrite() // half-close
+	} else {
+		_ = c.Close() // fallback to full close
+	}
+}
+
 func BidiCopy(remote, local io.ReadWriteCloser) {
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -16,7 +27,7 @@ func BidiCopy(remote, local io.ReadWriteCloser) {
 		if err != nil {
 			fmt.Println("bidi copy local->remote:", err)
 		}
-		remote.Close()
+		closeWrite(remote)
 	}()
 
 	go func() {
@@ -25,7 +36,7 @@ func BidiCopy(remote, local io.ReadWriteCloser) {
 		if err != nil {
 			fmt.Println("bidi copy remote->local:", err)
 		}
-		local.Close()
+		closeWrite(local)
 	}()
 
 	wg.Wait()

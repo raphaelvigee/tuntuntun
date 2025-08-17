@@ -17,16 +17,20 @@ type Client struct {
 	err  error
 }
 
-func (c *Client) yamuxSession(ctx context.Context) (*yamux.Session, error) {
-	if c.sess != nil || c.err != nil {
-		return c.sess, c.err
-	}
-
+func (c *Client) getSession(ctx context.Context) (*yamux.Session, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.sess != nil || c.err != nil {
-		return c.sess, c.err
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	if c.sess != nil && !c.sess.IsClosed() {
+		return c.sess, nil
+	}
+
+	if c.sess != nil {
+		_ = c.sess.Close()
 	}
 
 	c.sess, c.err = c.openSession(ctx)
@@ -40,7 +44,10 @@ func (c *Client) openSession(ctx context.Context) (*yamux.Session, error) {
 		return nil, err
 	}
 
-	sess, err := yamux.Client(conn, nil)
+	cfg := yamux.DefaultConfig()
+	//cfg.Logger = something
+
+	sess, err := yamux.Client(conn, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +56,7 @@ func (c *Client) openSession(ctx context.Context) (*yamux.Session, error) {
 }
 
 func (c *Client) Open(ctx context.Context) (net.Conn, error) {
-	sess, err := c.openSession(ctx)
+	sess, err := c.getSession(ctx)
 	if err != nil {
 		return nil, err
 	}

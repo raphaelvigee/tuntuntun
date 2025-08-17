@@ -148,7 +148,8 @@ type Server struct {
 }
 
 type openRequest struct {
-	reqId uint64
+	reqId  uint64
+	doneCh chan error
 }
 
 type PeerDescriptor struct {
@@ -275,6 +276,10 @@ func (s *Server) runReader(ctx context.Context, controlConn io.ReadWriteCloser) 
 		var msg ControlMessage
 		err := dec.Decode(&msg)
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+
 			return err
 		}
 
@@ -295,7 +300,7 @@ func (s *Server) runWriter(ctx context.Context, controlConn io.ReadWriteCloser) 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		case msg := <-s.openRequest:
 			err := json.NewEncoder(controlConn).Encode(ControlMessage{
 				Version: ControlMessageV1,
@@ -303,6 +308,7 @@ func (s *Server) runWriter(ctx context.Context, controlConn io.ReadWriteCloser) 
 					RequestID: msg.reqId,
 				},
 			})
+			msg.doneCh <- err
 			if err != nil {
 				return err
 			}
@@ -315,10 +321,20 @@ func (s *Server) peerOpen(ctx context.Context, p *PeerDescriptor, handler tuntun
 
 	p.reqHandler[reqId] = handler
 
+	req := openRequest{
+		reqId:  reqId,
+		doneCh: make(chan error, 1),
+	}
+
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
-	case s.openRequest <- openRequest{reqId: reqId}:
 		return nil
+	case s.openRequest <- req:
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-req.doneCh:
+			return err
+		}
 	}
 }

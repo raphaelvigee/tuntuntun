@@ -2,6 +2,7 @@ package tuntunfwd2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -75,9 +76,15 @@ func (c *Client) ServerToClient(ctx context.Context, laddr, raddr string) (net.L
 	}
 
 	go func() {
+		defer l.Close()
+
 		for {
 			lconn, err := l.Accept()
 			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+
 				fmt.Println(err)
 				return
 			}

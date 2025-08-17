@@ -2,6 +2,7 @@ package tuntunfwd2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -63,7 +64,11 @@ func TestServerOpenSanity(t *testing.T) {
 		for {
 			c, err := l.Accept()
 			if err != nil {
-				return
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+
+				require.NoError(t, err)
 			}
 
 			go func() {

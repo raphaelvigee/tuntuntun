@@ -134,6 +134,10 @@ func (h *Client) runReader(ctx context.Context, controlConn io.ReadWriteCloser) 
 		var msg ControlMessage
 		err := dec.Decode(&msg)
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+
 			return err
 		}
 
@@ -181,7 +185,7 @@ func (h *Client) runWriter(ctx context.Context, controlConn io.ReadWriteCloser) 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		}
 	}
 }

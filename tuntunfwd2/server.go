@@ -2,8 +2,10 @@ package tuntunfwd2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"tuntuntun"
 	"tuntuntun/tuntunopener"
 )
@@ -28,12 +30,15 @@ func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor
 	for {
 		lconn, err := l.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+
+			fmt.Println(err)
 			return
 		}
 
 		go func() {
-			// TODO: lconn has potential to never be closed if Open fails
-
 			err := h.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rconn io.ReadWriteCloser) error {
 				defer rconn.Close()
 				defer lconn.Close()
@@ -48,6 +53,7 @@ func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor
 				return nil
 			}))
 			if err != nil {
+				lconn.Close()
 				fmt.Println(err)
 			}
 		}()

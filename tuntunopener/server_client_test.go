@@ -2,6 +2,7 @@ package tuntunopener
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -52,7 +53,11 @@ func TestServerOpenSanity(t *testing.T) {
 		for {
 			c, err := l.Accept()
 			if err != nil {
-				return
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+
+				require.NoError(t, err)
 			}
 
 			go func() {
@@ -131,7 +136,10 @@ func TestClientOpenSanity(t *testing.T) {
 		for {
 			c, err := l.Accept()
 			if err != nil {
-				return
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+				require.NoError(t, err)
 			}
 
 			go func() {

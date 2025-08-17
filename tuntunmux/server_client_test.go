@@ -2,6 +2,7 @@ package tuntunmux
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -33,7 +34,11 @@ func TestSanity(t *testing.T) {
 		for {
 			conn, err := l.Accept()
 			if err != nil {
-				return
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+
+				require.NoError(t, err)
 			}
 
 			go func() {
@@ -86,7 +91,11 @@ func TestStress(t *testing.T) {
 		for {
 			conn, err := l.Accept()
 			if err != nil {
-				return
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+
+				require.NoError(t, err)
 			}
 
 			go func() {

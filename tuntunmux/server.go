@@ -2,6 +2,7 @@ package tuntunmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"tuntuntun"
@@ -34,6 +35,10 @@ func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 	for {
 		conn, err := sess.AcceptStreamWithContext(ctx)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+				return nil
+			}
+
 			return err
 		}
 
