@@ -3,95 +3,97 @@ package tuntunfwd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"tuntuntun"
+	"tuntuntun/tuntunopener"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func startServer(t *testing.T, f func(net.Conn)) net.Listener {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func testServer(t *testing.T) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hello"))
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv
+}
+
+func TestServerOpenSanity(t *testing.T) {
+	targetSrv := testServer(t)
+
+	ctx := t.Context()
+
+	cfg := Config{
+		LocalDial: func(ctx context.Context, addr string) (net.Conn, error) {
+			return net.Dial("tcp", addr)
+		},
+		LocalListen: func(ctx context.Context, addr string) (net.Listener, error) {
+			return net.Listen("tcp", addr)
+		},
+	}
+
+	receivedCh := make(chan string)
+
+	srv := NewServer(func() (tuntunopener.PeerHandler, error) {
+		return DefaultPeerHandler(cfg, []string{targetSrv.Listener.Addr().String()}, func(ctx context.Context, raddr, laddr string) {
+			fmt.Println("Listening on ", laddr)
+
+			res, err := http.Get("http://" + laddr)
+			require.NoError(t, err)
+
+			defer res.Body.Close()
+			b, err := io.ReadAll(res.Body)
+			require.NoError(t, err)
+
+			receivedCh <- string(b)
+		}), nil
+	})
+
+	l, err := net.Listen("tcp", ":0")
 	require.NoError(t, err)
-	t.Cleanup(func() { listener.Close() })
+	defer l.Close()
 
 	go func() {
 		for {
-			conn, err := listener.Accept()
+			c, err := l.Accept()
 			if err != nil {
 				if errors.Is(err, net.ErrClosed) {
 					return
 				}
 
-				t.Log("error accepting connection", err)
-				return
+				require.NoError(t, err)
 			}
 
 			go func() {
-				defer conn.Close()
+				defer c.Close()
 
-				f(conn)
+				err := srv.ServeConn(ctx, c)
+				require.NoError(t, err)
 			}()
 		}
 	}()
 
-	return listener
-}
+	c := NewClient(
+		cfg,
+		tuntuntun.OpenerFunc(func(ctx context.Context) (net.Conn, error) {
+			return net.Dial(l.Addr().Network(), l.Addr().String())
+		}),
+		DefaultPeerHandler(cfg, nil, func(ctx context.Context, raddr, laddr string) {
+			panic("should not be called")
+		}),
+	)
 
-func TestSanityRemote(t *testing.T) {
-	targetListener := startServer(t, func(conn net.Conn) {
-		_, _ = conn.Write([]byte("hello"))
-	})
-
-	srv := NewServer(ServerConfig{
-		AllowServerForward: func(ctx context.Context, addr string) error {
-			return nil
-		},
-	})
-	fwdListener := startServer(t, func(conn net.Conn) {
-		err := srv.ServeConn(context.Background(), conn)
-		require.NoError(t, err)
-	})
-
-	conn, err := RemoteDialContext(t.Context(), tuntuntun.NewOpenerFuncOnce(func(ctx context.Context) (net.Conn, error) {
-		return net.Dial(fwdListener.Addr().Network(), fwdListener.Addr().String())
-	}), targetListener.Addr().String())
+	_, err = c.Start(ctx)
 	require.NoError(t, err)
 
-	b, err := io.ReadAll(conn)
-	require.NoError(t, err)
+	received := <-receivedCh
 
-	require.Equal(t, "hello", string(b))
-}
-
-func TestSanityLocal(t *testing.T) {
-	targetListener := startServer(t, func(conn net.Conn) {
-		_, _ = conn.Write([]byte("hello"))
-	})
-
-	var read []byte
-
-	srv := NewServer(ServerConfig{
-		OnClientForward: func(ctx context.Context, conn io.ReadWriteCloser) error {
-			b, err := io.ReadAll(conn)
-			require.NoError(t, err)
-
-			read = b
-
-			return nil
-		},
-	})
-	fwdListener := startServer(t, func(conn net.Conn) {
-		err := srv.ServeConn(context.Background(), conn)
-		require.NoError(t, err)
-	})
-
-	err := LocalForward(t.Context(), tuntuntun.NewOpenerFuncOnce(func(ctx context.Context) (net.Conn, error) {
-		return net.Dial(fwdListener.Addr().Network(), fwdListener.Addr().String())
-	}), targetListener.Addr().String())
-	require.NoError(t, err)
-
-	require.Equal(t, "hello", string(read))
+	assert.Equal(t, "hello", received)
 }

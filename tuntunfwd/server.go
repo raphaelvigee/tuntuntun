@@ -2,75 +2,96 @@ package tuntunfwd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"tuntuntun"
+	"tuntuntun/tuntunopener"
 )
 
-type ServerConfig struct {
-	// Allows the client to request a port forwarding from the server
-	AllowServerForward func(ctx context.Context, addr string) error
-	// Allows the client to forward a port to the server
-	OnClientForward func(ctx context.Context, conn io.ReadWriteCloser) error
-}
-
 type Server struct {
-	ServerConfig
+	cfg    Config
+	server *tuntunopener.Server
 }
 
-func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
-	defer conn.Close()
-
-	var i Init
-	err := json.NewDecoder(conn).Decode(&i)
+func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor, raddr string, onListen func(ctx context.Context, raddr, laddr string)) {
+	l, err := cfg.LocalListen(ctx, ":0")
 	if err != nil {
-		return err
+		fmt.Println(err)
+		return
+	}
+	defer l.Close()
+
+	if onListen != nil {
+		go onListen(ctx, raddr, l.Addr().String())
 	}
 
-	if i.Version != V1 {
-		return errors.New("unsupported version")
-	}
-
-	switch i.Mode {
-	case ServerForward:
-		if i.Addr == "" {
-			return errors.New("addr is empty")
-		}
-
-		if s.AllowServerForward == nil {
-			return errors.New("server denied forwarding request")
-		}
-
-		err := s.AllowServerForward(ctx, i.Addr)
+	for {
+		lconn, err := l.Accept()
 		if err != nil {
-			return fmt.Errorf("server denied forwarding request: %w", err)
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+
+			fmt.Println(err)
+			return
 		}
 
-		l, err := net.Dial("tcp", i.Addr)
-		if err != nil {
-			return err
-		}
-		defer l.Close()
+		go func() {
+			err := h.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rconn io.ReadWriteCloser) error {
+				defer rconn.Close()
+				defer lconn.Close()
 
-		tuntuntun.BidiCopy(conn, l)
+				err := WriteInit(rconn, raddr)
+				if err != nil {
+					return err
+				}
 
-		return nil
-	case ClientForward:
-		if s.OnClientForward == nil {
-			return errors.New("server doesnt accept forwarding")
-		}
+				tuntuntun.BidiCopy(rconn, lconn)
 
-		return s.OnClientForward(ctx, conn)
-	default:
-		return fmt.Errorf("unknown server forward mode: %q", i.Mode)
+				return nil
+			}))
+			if err != nil {
+				lconn.Close()
+				fmt.Println(err)
+			}
+		}()
 	}
 }
 
-func NewServer(cfg ServerConfig) *Server {
-	return &Server{
-		ServerConfig: cfg,
+func DefaultPeerHandler(cfg Config, autoForward []string, onListen func(ctx context.Context, raddr, laddr string)) tuntunopener.PeerHandler {
+	return tuntunopener.PeerHandlerFunc{
+		OnPeerFunc: func(ctx context.Context, h *tuntunopener.PeerDescriptor) {
+			for _, addr := range autoForward {
+				go runListener(ctx, cfg, h, addr, onListen)
+			}
+		},
+		ServeConnFunc: func(ctx context.Context, rconn io.ReadWriteCloser) error {
+			msg, err := ReadInit(rconn)
+			if err != nil {
+				return err
+			}
+
+			lconn, err := cfg.LocalDial(ctx, msg.Addr)
+			if err != nil {
+				return err
+			}
+			defer lconn.Close()
+
+			tuntuntun.BidiCopy(rconn, lconn)
+
+			return nil
+		},
 	}
+}
+
+func NewServer(factory func() (tuntunopener.PeerHandler, error)) *Server {
+	return &Server{
+		server: tuntunopener.NewServer(factory),
+	}
+}
+
+func (c *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
+	return c.server.ServeConn(ctx, conn)
 }

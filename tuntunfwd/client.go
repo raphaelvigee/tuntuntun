@@ -1,4 +1,4 @@
-package tuntunfwd2
+package tuntunfwd
 
 import (
 	"context"

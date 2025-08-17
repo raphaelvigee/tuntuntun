@@ -12,7 +12,7 @@ import (
 	"os"
 	"strings"
 	"tuntuntun"
-	"tuntuntun/tuntunfwd2"
+	"tuntuntun/tuntunfwd"
 	"tuntuntun/tuntunh2"
 	"tuntuntun/tuntunhttp"
 	"tuntuntun/tuntunmux"
@@ -60,7 +60,7 @@ func main() {
 			opener = ttmux
 		}
 
-		cfg := tuntunfwd2.Config{
+		cfg := tuntunfwd.Config{
 			LocalDial: func(ctx context.Context, addr string) (net.Conn, error) {
 				return net.Dial("tcp4", addr)
 			},
@@ -69,10 +69,10 @@ func main() {
 			},
 		}
 
-		client := tuntunfwd2.NewClient(
+		client := tuntunfwd.NewClient(
 			cfg,
 			opener,
-			tuntunfwd2.DefaultPeerHandler(
+			tuntunfwd.DefaultPeerHandler(
 				cfg,
 				nil,
 				func(ctx context.Context, raddr, laddr string) {
@@ -98,9 +98,9 @@ func main() {
 		mux := flag.Bool("mux", false, "enable mux")
 		flag.CommandLine.Parse(args[1:])
 
-		var handler tuntuntun.Handler = tuntunfwd2.NewServer(func() (tuntunopener.PeerHandler, error) {
-			return tuntunfwd2.DefaultPeerHandler(
-				tuntunfwd2.Config{
+		var handler tuntuntun.Handler = tuntunfwd.NewServer(func() (tuntunopener.PeerHandler, error) {
+			return tuntunfwd.DefaultPeerHandler(
+				tuntunfwd.Config{
 					LocalDial: func(ctx context.Context, addr string) (net.Conn, error) {
 						if *allowForward {
 							return net.Dial("tcp4", addr)
