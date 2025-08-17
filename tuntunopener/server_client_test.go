@@ -20,25 +20,27 @@ func TestServerOpenSanity(t *testing.T) {
 	serverConnected := make(chan struct{})
 
 	srv := NewServer(
-		func() Handler {
-			return HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
-				panic("should not be called")
-			})
-		},
-		func(ctx context.Context, h *PeerHandle) {
-			err := h.Open(ctx, HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
-				serverConnected <- struct{}{}
+		func() (PeerHandler, error) {
+			return PeerHandlerFunc{
+				OnPeerFunc: func(ctx context.Context, h *PeerDescriptor) {
+					err := h.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
+						serverConnected <- struct{}{}
 
-				return nil
-			}))
-			require.NoError(t, err)
+						return nil
+					}))
+					require.NoError(t, err)
 
-			err = h.Open(ctx, HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
-				serverConnected <- struct{}{}
+					err = h.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
+						serverConnected <- struct{}{}
 
-				return nil
-			}))
-			require.NoError(t, err)
+						return nil
+					}))
+					require.NoError(t, err)
+				},
+				ServeConnFunc: func(ctx context.Context, conn io.ReadWriteCloser) error {
+					panic("should not be called")
+				},
+			}, nil
 		},
 	)
 
@@ -64,17 +66,15 @@ func TestServerOpenSanity(t *testing.T) {
 		tuntuntun.OpenerFunc(func(ctx context.Context) (net.Conn, error) {
 			return net.Dial(l.Addr().Network(), l.Addr().String())
 		}),
-		HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
+		tuntuntun.HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
 			clientConnected <- struct{}{}
 
 			return nil
 		}),
 	)
 
-	go func() {
-		err := c.Run(ctx)
-		require.NoError(t, err)
-	}()
+	err = c.Start(ctx)
+	require.NoError(t, err)
 
 	var g errgroup.Group
 	g.Go(func() error {
@@ -110,14 +110,15 @@ func TestClientOpenSanity(t *testing.T) {
 	serverConnected := make(chan struct{})
 
 	srv := NewServer(
-		func() Handler {
-			return HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
-				serverConnected <- struct{}{}
+		func() (PeerHandler, error) {
+			return PeerHandlerFunc{
+				ServeConnFunc: func(ctx context.Context, conn io.ReadWriteCloser) error {
+					serverConnected <- struct{}{}
 
-				return nil
-			})
+					return nil
+				},
+			}, nil
 		},
-		nil,
 	)
 
 	l, err := net.Listen("tcp", ":0")
@@ -142,20 +143,18 @@ func TestClientOpenSanity(t *testing.T) {
 		tuntuntun.OpenerFunc(func(ctx context.Context) (net.Conn, error) {
 			return net.Dial(l.Addr().Network(), l.Addr().String())
 		}),
-		HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
+		tuntuntun.HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
 			clientConnected <- struct{}{}
 
 			return nil
 		}),
 	)
 
-	go func() {
-		err := c.Run(ctx)
-		require.NoError(t, err)
-	}()
+	err = c.Start(ctx)
+	require.NoError(t, err)
 
 	go func() {
-		err := c.Open(ctx, HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
+		err := c.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
 			clientConnected <- struct{}{}
 
 			return nil
@@ -164,7 +163,7 @@ func TestClientOpenSanity(t *testing.T) {
 	}()
 
 	go func() {
-		err := c.Open(ctx, HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
+		err := c.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rw io.ReadWriteCloser) error {
 			clientConnected <- struct{}{}
 
 			return nil

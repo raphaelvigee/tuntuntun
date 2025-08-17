@@ -9,6 +9,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"tuntuntun"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -109,59 +110,65 @@ func WriteTunInit(r io.Writer, peerId, reqId uint64) error {
 	return nil
 }
 
-type Handler interface {
-	ServeConn(ctx context.Context, conn io.ReadWriteCloser) error
+type PeerHandler interface {
+	tuntuntun.Handler
+
+	OnPeer(ctx context.Context, h *PeerDescriptor)
 }
 
-type HandlerFunc func(context.Context, io.ReadWriteCloser) error
+type PeerHandlerFunc struct {
+	OnPeerFunc    func(ctx context.Context, h *PeerDescriptor)
+	ServeConnFunc func(ctx context.Context, conn io.ReadWriteCloser) error
+}
 
-func (h HandlerFunc) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
-	return h(ctx, conn)
+func (p PeerHandlerFunc) OnPeer(ctx context.Context, h *PeerDescriptor) {
+	if p.OnPeerFunc == nil {
+		return
+	}
+
+	p.OnPeerFunc(ctx, h)
+}
+
+func (p PeerHandlerFunc) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
+	if p.ServeConnFunc == nil {
+		return errors.New("not implemented")
+	}
+
+	return p.ServeConnFunc(ctx, conn)
 }
 
 type Server struct {
-	handlerFactory func() Handler
-	peersm         sync.Mutex
-	peers          map[uint64]*PeerHandle
-	peerIdc        atomic.Uint64
+	handlerFactory func() (PeerHandler, error)
+
+	peersm  sync.Mutex
+	peers   map[uint64]*PeerDescriptor
+	peerIdc atomic.Uint64
 
 	openRequest chan openRequest
-
-	onPeer func(ctx context.Context, h *PeerHandle)
 }
 
 type openRequest struct {
 	reqId uint64
 }
 
-type PeerHandle struct {
-	s *Server
+type PeerDescriptor struct {
+	open func(ctx context.Context, p *PeerDescriptor, handler tuntuntun.Handler) error
+	ID   uint64
 
-	id      uint64
-	handler Handler
+	handler tuntuntun.Handler
 
 	reqIdc     atomic.Uint64
-	reqHandler map[uint64]Handler
+	reqHandler map[uint64]tuntuntun.Handler
 }
 
-func (p *PeerHandle) Open(ctx context.Context, handler Handler) error {
-	reqId := p.reqIdc.Add(1)
-
-	p.reqHandler[reqId] = handler
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case p.s.openRequest <- openRequest{reqId: reqId}:
-		return nil
-	}
+func (p *PeerDescriptor) Open(ctx context.Context, handler tuntuntun.Handler) error {
+	return p.open(ctx, p, handler)
 }
 
-func NewServer(handler func() Handler, onPeer func(ctx context.Context, h *PeerHandle)) *Server {
+func NewServer(handlerFactory func() (PeerHandler, error)) *Server {
 	return &Server{
-		handlerFactory: handler,
-		onPeer:         onPeer,
-		peers:          map[uint64]*PeerHandle{},
+		handlerFactory: handlerFactory,
+		peers:          map[uint64]*PeerDescriptor{},
 		openRequest:    make(chan openRequest),
 	}
 }
@@ -188,39 +195,41 @@ func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 			return fmt.Errorf("expected init_request, got %#v", init)
 		}
 
-		peerId := s.peerIdc.Add(1)
-		handler := s.handlerFactory()
-
-		peerHandle := &PeerHandle{
-			s:          s,
-			id:         peerId,
-			handler:    handler,
-			reqHandler: make(map[uint64]Handler),
+		handler, err := s.handlerFactory()
+		if err != nil {
+			return err
 		}
 
-		s.peersm.Lock()
-		s.peers[peerId] = peerHandle
-		s.peersm.Unlock()
+		peerHandle := &PeerDescriptor{
+			ID:         s.peerIdc.Add(1),
+			handler:    handler,
+			reqHandler: make(map[uint64]tuntuntun.Handler),
+			open: func(ctx context.Context, p *PeerDescriptor, handler tuntuntun.Handler) error {
+				return s.peerOpen(ctx, p, handler)
+			},
+		}
 
 		err = json.NewEncoder(conn).Encode(&ControlMessage{
 			Version: ControlMessageV1,
 			InitResponse: &InitResponseMessage{
-				PeerID: peerId,
+				PeerID: peerHandle.ID,
 			},
 		})
 		if err != nil {
 			return err
 		}
 
+		s.peersm.Lock()
+		s.peers[peerHandle.ID] = peerHandle
+		s.peersm.Unlock()
+
 		defer func() {
 			s.peersm.Lock()
-			delete(s.peers, peerId)
+			delete(s.peers, peerHandle.ID)
 			s.peersm.Unlock()
 		}()
 
-		if s.onPeer != nil {
-			go s.onPeer(ctx, peerHandle)
-		}
+		go handler.OnPeer(ctx, peerHandle)
 
 		var g errgroup.Group
 		g.Go(func() error {
@@ -298,5 +307,18 @@ func (s *Server) runWriter(ctx context.Context, controlConn io.ReadWriteCloser) 
 				return err
 			}
 		}
+	}
+}
+
+func (s *Server) peerOpen(ctx context.Context, p *PeerDescriptor, handler tuntuntun.Handler) error {
+	reqId := p.reqIdc.Add(1)
+
+	p.reqHandler[reqId] = handler
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.openRequest <- openRequest{reqId: reqId}:
+		return nil
 	}
 }

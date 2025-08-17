@@ -14,28 +14,43 @@ import (
 
 type Client struct {
 	opener  tuntuntun.Opener
-	handler Handler
+	handler tuntuntun.Handler
 	peerId  uint64
 
 	requestIdc     atomic.Uint64
 	forwardRequest chan forwardRequest
-
-	ready chan struct{}
 }
 
 type forwardRequest struct {
 	requestId uint64
 }
 
-func NewClient(opener tuntuntun.Opener, handler Handler) *Client {
+func NewClient(opener tuntuntun.Opener, handler tuntuntun.Handler) *Client {
 	return &Client{
 		opener:  opener,
 		handler: handler,
-		ready:   make(chan struct{}),
 	}
 }
 
-func (h *Client) Run(ctx context.Context) error {
+func (h *Client) Start(ctx context.Context) error {
+	readyCh := make(chan struct{}, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		err := h.run(ctx, readyCh)
+		if err != nil {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case <-readyCh:
+		return nil
+	case err := <-errCh:
+		return err
+	}
+}
+
+func (h *Client) run(ctx context.Context, ready chan struct{}) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -78,7 +93,8 @@ func (h *Client) Run(ctx context.Context) error {
 	}
 
 	h.peerId = msg.InitResponse.PeerID
-	close(h.ready)
+
+	ready <- struct{}{}
 
 	var g errgroup.Group
 	g.Go(func() error {
@@ -91,7 +107,7 @@ func (h *Client) Run(ctx context.Context) error {
 	return g.Wait()
 }
 
-func (h *Client) Open(ctx context.Context, handler Handler) error {
+func (h *Client) Open(ctx context.Context, handler tuntuntun.Handler) error {
 	conn, err := h.opener.Open(ctx)
 	if err != nil {
 		return err
@@ -101,8 +117,6 @@ func (h *Client) Open(ctx context.Context, handler Handler) error {
 	if err != nil {
 		return err
 	}
-
-	<-h.ready
 
 	err = WriteTunInit(conn, h.peerId, 0)
 	if err != nil {
@@ -165,16 +179,16 @@ func (h *Client) runWriter(ctx context.Context, controlConn io.ReadWriteCloser) 
 	for {
 		select {
 		case <-ctx.Done():
-			//case msg := <-h.forwardRequest:
-			//	err := json.NewEncoder(controlConn).Encode(ControlMessage{
-			//		Version: ControlMessageV1,
-			//		ConnRequest: &ConnRequestMessage{
-			//			RequestID: 0,
-			//		},
-			//	})
-			//	if err != nil {
-			//		return err
-			//	}
+			return ctx.Err()
 		}
+	}
+}
+
+func (h *Client) GetPeerDescriptor() *PeerDescriptor {
+	return &PeerDescriptor{
+		ID: h.peerId,
+		open: func(ctx context.Context, p *PeerDescriptor, handler tuntuntun.Handler) error {
+			return h.Open(ctx, handler)
+		},
 	}
 }
