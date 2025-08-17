@@ -29,20 +29,46 @@ func NewClient(cfg Config, opener tuntuntun.Opener, handler tuntunopener.PeerHan
 	}
 }
 
-func (c *Client) Start(ctx context.Context) error {
-	err := c.client.Start(ctx)
+func (c *Client) Start(ctx context.Context) (chan error, error) {
+	doneCh, err := c.client.Start(ctx)
 	if err != nil {
-		return err
+		return doneCh, err
 	}
 
 	if c.onPeer != nil {
 		c.onPeer(ctx, c.client.GetPeerDescriptor())
 	}
 
+	return doneCh, nil
+}
+
+func (c *Client) ClientToServer(ctx context.Context, laddr, raddr string) error {
+	err := c.client.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rconn io.ReadWriteCloser) error {
+		defer rconn.Close()
+
+		err := WriteInit(rconn, raddr)
+		if err != nil {
+			return err
+		}
+
+		lconn, err := c.cfg.LocalDial(ctx, laddr)
+		if err != nil {
+			return err
+		}
+		defer lconn.Close()
+
+		tuntuntun.BidiCopy(rconn, lconn)
+
+		return nil
+	}))
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (c *Client) Open(ctx context.Context, laddr, raddr string) (net.Listener, error) {
+func (c *Client) ServerToClient(ctx context.Context, laddr, raddr string) (net.Listener, error) {
 	l, err := c.cfg.LocalListen(ctx, laddr)
 	if err != nil {
 		return nil, err

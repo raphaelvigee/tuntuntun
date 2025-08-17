@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -13,10 +12,11 @@ import (
 	"os"
 	"strings"
 	"tuntuntun"
-	"tuntuntun/tuntunfwd"
+	"tuntuntun/tuntunfwd2"
 	"tuntuntun/tuntunh2"
 	"tuntuntun/tuntunhttp"
 	"tuntuntun/tuntunmux"
+	"tuntuntun/tuntunopener"
 	"tuntuntun/tuntunws"
 
 	"golang.org/x/net/http2"
@@ -35,9 +35,6 @@ func main() {
 	case "client":
 		addr := flag.String("addr", "https://localhost:1234", "server address")
 		transport := flag.String("transport", "h2", "http transport [h2, ws]")
-		remoteAddr := flag.String("remote-addr", "", "remote address to bind")
-		localAddr := flag.String("local-addr", "", "local address to bind")
-		name := flag.String("name", strings.Join(args, " "), "connection name")
 		mux := flag.Bool("mux", true, "enable mux")
 		flag.CommandLine.Parse(args[1:])
 
@@ -45,10 +42,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		q := u.Query()
-		q.Set("name", *name)
-		u.RawQuery = q.Encode()
 
 		var opener tuntuntun.Opener
 		switch *transport {
@@ -67,55 +60,64 @@ func main() {
 			opener = ttmux
 		}
 
-		if *remoteAddr != "" {
-			err := tuntunfwd.RemoteForward(opener, *remoteAddr, *localAddr)
-			if err != nil {
-				log.Fatal(err)
-			}
-		} else {
-			err := tuntunfwd.LocalForward(ctx, opener, *localAddr)
-			if err != nil {
-				log.Fatal(err)
-			}
+		cfg := tuntunfwd2.Config{
+			LocalDial: func(ctx context.Context, addr string) (net.Conn, error) {
+				return net.Dial("tcp4", addr)
+			},
+			LocalListen: func(ctx context.Context, addr string) (net.Listener, error) {
+				return net.Listen("tcp4", addr)
+			},
+		}
+
+		client := tuntunfwd2.NewClient(
+			cfg,
+			opener,
+			tuntunfwd2.DefaultPeerHandler(
+				cfg,
+				nil,
+				func(ctx context.Context, raddr, laddr string) {
+					panic("should not happen")
+				},
+			),
+		)
+
+		doneCh, err := client.Start(ctx)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		err = <-doneCh
+		if err != nil {
+			log.Fatal(err)
 		}
 	case "server":
 		addr := flag.String("addr", ":1234", "http server address")
 		allowForward := flag.Bool("allow-forward", false, "allow forwarding request")
+		remoteAddrs := flag.String("remote-addrs", "", "comma-separated addresses to request forwarding")
 		transport := flag.String("transport", "h2", "http transport [h2, ws]")
 		mux := flag.Bool("mux", true, "enable mux")
 		flag.CommandLine.Parse(args[1:])
 
-		var handler tuntuntun.Handler = tuntunfwd.NewServer(tuntunfwd.ServerConfig{
-			AllowServerForward: func(ctx context.Context, addr string) error {
-				if *allowForward {
-					return nil // allow all
-				} else {
-					return errors.New("denied by cli")
-				}
-			},
-			OnClientForward: func(ctx context.Context, conn io.ReadWriteCloser) error {
-				defer conn.Close()
+		var handler tuntuntun.Handler = tuntunfwd2.NewServer(func() (tuntunopener.PeerHandler, error) {
+			return tuntunfwd2.DefaultPeerHandler(
+				tuntunfwd2.Config{
+					LocalDial: func(ctx context.Context, addr string) (net.Conn, error) {
+						if *allowForward {
+							return net.Dial("tcp4", addr)
+						} else {
+							return nil, errors.New("denied by cli")
+						}
 
-				l, err := net.Listen("tcp4", ":0")
-				if err != nil {
-					return err
-				}
-
-				req := tuntunhttp.RequestFromContext(ctx)
-
-				name := req.URL.Query().Get("name")
-
-				fmt.Printf("[%v] Listening on %v\n", name, l.Addr())
-
-				lconn, err := l.Accept()
-				if err != nil {
-					return err
-				}
-
-				tuntuntun.BidiCopy(conn, lconn)
-
-				return err
-			},
+					},
+					LocalListen: func(ctx context.Context, addr string) (net.Listener, error) {
+						return net.Listen("tcp4", addr)
+					},
+				},
+				strings.Split(*remoteAddrs, ","),
+				func(ctx context.Context, raddr, laddr string) {
+					fmt.Printf("[%v] Listening on %v\n", raddr, laddr)
+				},
+			), nil
 		})
 
 		if *mux {

@@ -41,10 +41,10 @@ func TestServerOpenSanity(t *testing.T) {
 	receivedCh := make(chan string)
 
 	srv := NewServer(func() (tuntunopener.PeerHandler, error) {
-		return DefaultPeerHandler(cfg, []string{targetSrv.Listener.Addr().String()}, func(addr string) {
-			fmt.Println("Listening on ", addr)
+		return DefaultPeerHandler(cfg, []string{targetSrv.Listener.Addr().String()}, func(ctx context.Context, raddr, laddr string) {
+			fmt.Println("Listening on ", laddr)
 
-			res, err := http.Get("http://" + addr)
+			res, err := http.Get("http://" + laddr)
 			require.NoError(t, err)
 
 			defer res.Body.Close()
@@ -80,12 +80,12 @@ func TestServerOpenSanity(t *testing.T) {
 		tuntuntun.OpenerFunc(func(ctx context.Context) (net.Conn, error) {
 			return net.Dial(l.Addr().Network(), l.Addr().String())
 		}),
-		DefaultPeerHandler(cfg, nil, func(addr string) {
+		DefaultPeerHandler(cfg, nil, func(ctx context.Context, raddr, laddr string) {
 			panic("should not be called")
 		}),
 	)
 
-	err = c.Start(ctx)
+	_, err = c.Start(ctx)
 	require.NoError(t, err)
 
 	received := <-receivedCh

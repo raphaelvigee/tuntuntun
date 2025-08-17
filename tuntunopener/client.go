@@ -32,7 +32,8 @@ func NewClient(opener tuntuntun.Opener, handler tuntuntun.Handler) *Client {
 	}
 }
 
-func (h *Client) Start(ctx context.Context) error {
+func (h *Client) Start(ctx context.Context) (chan error, error) {
+	doneCh := make(chan error, 1)
 	readyCh := make(chan struct{}, 1)
 	errCh := make(chan error, 1)
 	go func() {
@@ -40,13 +41,14 @@ func (h *Client) Start(ctx context.Context) error {
 		if err != nil {
 			errCh <- err
 		}
+		doneCh <- err
 	}()
 
 	select {
 	case <-readyCh:
-		return nil
+		return doneCh, nil
 	case err := <-errCh:
-		return err
+		return doneCh, err
 	}
 }
 

@@ -13,7 +13,7 @@ type Server struct {
 	server *tuntunopener.Server
 }
 
-func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor, raddr string, onListen func(addr string)) {
+func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor, raddr string, onListen func(ctx context.Context, raddr, laddr string)) {
 	l, err := cfg.LocalListen(ctx, ":0")
 	if err != nil {
 		fmt.Println(err)
@@ -22,7 +22,7 @@ func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor
 	defer l.Close()
 
 	if onListen != nil {
-		go onListen(l.Addr().String())
+		go onListen(ctx, raddr, l.Addr().String())
 	}
 
 	for {
@@ -32,6 +32,8 @@ func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor
 		}
 
 		go func() {
+			// TODO: lconn has potential to never be closed if Open fails
+
 			err := h.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rconn io.ReadWriteCloser) error {
 				defer rconn.Close()
 				defer lconn.Close()
@@ -52,7 +54,7 @@ func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor
 	}
 }
 
-func DefaultPeerHandler(cfg Config, autoForward []string, onListen func(addr string)) tuntunopener.PeerHandler {
+func DefaultPeerHandler(cfg Config, autoForward []string, onListen func(ctx context.Context, raddr, laddr string)) tuntunopener.PeerHandler {
 	return tuntunopener.PeerHandlerFunc{
 		OnPeerFunc: func(ctx context.Context, h *tuntunopener.PeerDescriptor) {
 			for _, addr := range autoForward {

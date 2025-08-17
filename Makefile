@@ -4,4 +4,4 @@ run-sample-box:
 	docker run --rm -p 5201:5201 tuntuntun-samplebox
 
 run-sample-box-server:
-	go run ./cmd/example/main.go server -addr=:8888 -transport=h2
+	go run ./cmd/example/main.go server -addr=:8888 -transport=ws -remote-addrs=:22,:8080,:5201

@@ -75,7 +75,7 @@ func TestServerOpenSanity(t *testing.T) {
 		}),
 	)
 
-	err = c.Start(ctx)
+	_, err = c.Start(ctx)
 	require.NoError(t, err)
 
 	var g errgroup.Group
@@ -154,7 +154,7 @@ func TestClientOpenSanity(t *testing.T) {
 		}),
 	)
 
-	err = c.Start(ctx)
+	_, err = c.Start(ctx)
 	require.NoError(t, err)
 
 	go func() {
