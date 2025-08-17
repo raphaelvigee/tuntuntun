@@ -15,8 +15,6 @@ type Client struct {
 	mu   sync.Mutex
 	sess *yamux.Session
 	err  error
-
-	once sync.Once
 }
 
 func (c *Client) yamuxSession(ctx context.Context) (*yamux.Session, error) {
@@ -63,6 +61,14 @@ func (c *Client) Close() error {
 	if c.sess == nil {
 		return nil
 	}
+
+	defer func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		c.sess = nil
+		c.err = nil
+	}()
 
 	return c.sess.Close()
 }

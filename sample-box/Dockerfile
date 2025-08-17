@@ -31,7 +31,7 @@ RUN chmod +x /usr/local/bin/tuntuntun
 # Copy the supervisor config file
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-EXPOSE 80 5201
+EXPOSE 5201
 
 # Run supervisord as the main command
 CMD ["/usr/bin/supervisord"]
