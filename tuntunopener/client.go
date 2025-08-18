@@ -6,37 +6,59 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync/atomic"
 	"tuntuntun"
 
 	"golang.org/x/sync/errgroup"
 )
 
+type Option func(*Client)
+
+func WithLogger(l *slog.Logger) Option {
+	return func(c *Client) {
+		c.logger = l
+	}
+}
+
 type Client struct {
 	opener  tuntuntun.Opener
 	handler tuntuntun.Handler
 	peerId  uint64
+	logger  *slog.Logger
 
 	requestIdc     atomic.Uint64
 	forwardRequest chan forwardRequest
+	cancel         context.CancelFunc
 }
 
 type forwardRequest struct {
 	requestId uint64
 }
 
-func NewClient(opener tuntuntun.Opener, handler tuntuntun.Handler) *Client {
-	return &Client{
+func NewClient(opener tuntuntun.Opener, handler tuntuntun.Handler, opts ...Option) *Client {
+	c := &Client{
 		opener:  opener,
 		handler: handler,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
 }
 
 func (h *Client) Start(ctx context.Context) (chan error, error) {
 	doneCh := make(chan error, 1)
 	readyCh := make(chan struct{}, 1)
 	errCh := make(chan error, 1)
+
+	ctx, cancel := context.WithCancel(ctx)
+
 	go func() {
+		defer cancel()
+		h.cancel = cancel
+
 		err := h.run(ctx, readyCh)
 		if err != nil {
 			errCh <- err
@@ -52,10 +74,15 @@ func (h *Client) Start(ctx context.Context) (chan error, error) {
 	}
 }
 
-func (h *Client) run(ctx context.Context, ready chan struct{}) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+func (h *Client) Close() error {
+	if h.cancel != nil {
+		h.cancel()
+	}
 
+	return nil
+}
+
+func (h *Client) run(ctx context.Context, ready chan struct{}) error {
 	conn, err := h.opener.Open(ctx)
 	if err != nil {
 		return err
@@ -129,6 +156,8 @@ func (h *Client) Open(ctx context.Context, handler tuntuntun.Handler) error {
 }
 
 func (h *Client) runReader(ctx context.Context, controlConn io.ReadWriteCloser) error {
+	defer h.Close()
+
 	dec := json.NewDecoder(controlConn)
 	for {
 		var msg ControlMessage
@@ -147,38 +176,36 @@ func (h *Client) runReader(ctx context.Context, controlConn io.ReadWriteCloser) 
 
 		switch {
 		case msg.ConnRequest != nil:
-			go h.handleConnRequest(ctx, msg.ConnRequest)
+			go func() {
+				err := h.handleConnRequest(ctx, msg.ConnRequest)
+				if err != nil {
+					fmt.Println(err)
+				}
+			}()
 		default:
 			return errors.New("invalid init request")
 		}
 	}
 }
 
-func (h *Client) handleConnRequest(ctx context.Context, req *ConnRequestMessage) {
+func (h *Client) handleConnRequest(ctx context.Context, req *ConnRequestMessage) error {
 	conn, err := h.opener.Open(ctx)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 	defer conn.Close()
 
 	err = WriteConnInit(conn, ConnTypeTun)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 
 	err = WriteTunInit(conn, h.peerId, req.RequestID)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 
-	err = h.handler.ServeConn(ctx, conn)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+	return h.handler.ServeConn(ctx, conn)
 }
 
 func (h *Client) runWriter(ctx context.Context, controlConn io.ReadWriteCloser) error {

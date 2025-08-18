@@ -1,6 +1,7 @@
 package tuntuntun
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -17,7 +18,8 @@ func closeWrite(c io.ReadWriteCloser) {
 	}
 }
 
-func BidiCopy(remote, local io.ReadWriteCloser) {
+func BidiCopy(remote, local io.ReadWriteCloser) error {
+	var errs [2]error
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -25,7 +27,7 @@ func BidiCopy(remote, local io.ReadWriteCloser) {
 		defer wg.Done()
 		_, err := io.Copy(remote, local)
 		if err != nil {
-			fmt.Println("bidi copy local->remote:", err)
+			errs[0] = fmt.Errorf("bidi copy local->remote: %w", err)
 		}
 		closeWrite(remote)
 	}()
@@ -34,10 +36,12 @@ func BidiCopy(remote, local io.ReadWriteCloser) {
 		defer wg.Done()
 		_, err := io.Copy(local, remote)
 		if err != nil {
-			fmt.Println("bidi copy remote->local:", err)
+			errs[1] = fmt.Errorf("bidi copy remote->local: %w", err)
 		}
 		closeWrite(local)
 	}()
 
 	wg.Wait()
+
+	return errors.Join(errs[:]...)
 }

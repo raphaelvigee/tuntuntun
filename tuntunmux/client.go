@@ -2,6 +2,7 @@ package tuntunmux
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"sync"
 	"tuntuntun"
@@ -9,8 +10,28 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
+type ClientOption func(s *Client)
+
+func WithClientLogger(l *slog.Logger) ClientOption {
+	return func(s *Client) {
+		s.logger = l
+	}
+}
+
+func NewClient(opener tuntuntun.Opener, opts ...ClientOption) *Client {
+	s := &Client{
+		opener: opener,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
+}
+
 type Client struct {
 	opener tuntuntun.Opener
+	logger *slog.Logger
 
 	mu   sync.Mutex
 	sess *yamux.Session
@@ -45,7 +66,8 @@ func (c *Client) openSession(ctx context.Context) (*yamux.Session, error) {
 	}
 
 	cfg := yamux.DefaultConfig()
-	//cfg.Logger = something
+	cfg.Logger = logger{logger: c.logger, ctx: ctx}
+	cfg.LogOutput = nil
 
 	sess, err := yamux.Client(conn, cfg)
 	if err != nil {
@@ -78,10 +100,4 @@ func (c *Client) Close() error {
 	}()
 
 	return c.sess.Close()
-}
-
-func NewClient(opener tuntuntun.Opener) *Client {
-	return &Client{
-		opener: opener,
-	}
 }

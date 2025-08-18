@@ -3,8 +3,8 @@ package tuntunfwd
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"tuntuntun"
 	"tuntuntun/tuntunopener"
@@ -18,7 +18,9 @@ type Server struct {
 func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor, raddr string, onListen func(ctx context.Context, raddr, laddr string)) {
 	l, err := cfg.LocalListen(ctx, ":0")
 	if err != nil {
-		fmt.Println(err)
+		if cfg.Logger != nil {
+			cfg.Logger.Log(ctx, slog.LevelError, "failed to listen", slog.String("err", err.Error()))
+		}
 		return
 	}
 	defer l.Close()
@@ -34,7 +36,9 @@ func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor
 				return
 			}
 
-			fmt.Println(err)
+			if cfg.Logger != nil {
+				cfg.Logger.Log(ctx, slog.LevelError, "failed to accept", slog.String("err", err.Error()))
+			}
 			return
 		}
 
@@ -48,13 +52,13 @@ func runListener(ctx context.Context, cfg Config, h *tuntunopener.PeerDescriptor
 					return err
 				}
 
-				tuntuntun.BidiCopy(rconn, lconn)
-
-				return nil
+				return tuntuntun.BidiCopy(rconn, lconn)
 			}))
 			if err != nil {
 				lconn.Close()
-				fmt.Println(err)
+				if cfg.Logger != nil {
+					cfg.Logger.Log(ctx, slog.LevelError, "failed to open", slog.String("err", err.Error()))
+				}
 			}
 		}()
 	}
@@ -68,6 +72,8 @@ func DefaultPeerHandler(cfg Config, autoForward []string, onListen func(ctx cont
 			}
 		},
 		ServeConnFunc: func(ctx context.Context, rconn io.ReadWriteCloser) error {
+			defer rconn.Close()
+
 			msg, err := ReadInit(rconn)
 			if err != nil {
 				return err
@@ -79,9 +85,7 @@ func DefaultPeerHandler(cfg Config, autoForward []string, onListen func(ctx cont
 			}
 			defer lconn.Close()
 
-			tuntuntun.BidiCopy(rconn, lconn)
-
-			return nil
+			return tuntuntun.BidiCopy(rconn, lconn)
 		},
 	}
 }

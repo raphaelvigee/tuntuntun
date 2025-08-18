@@ -20,7 +20,7 @@ type Client struct {
 
 func (c *Client) Connect(ctx context.Context) (net.Conn, *http.Response, error) {
 	conn, res, err := websocket.Dial(ctx, c.url, &websocket.DialOptions{
-		Subprotocols: []string{Protocol},
+		Subprotocols: []string{SubProtocol},
 	})
 	if err != nil {
 		return nil, nil, err

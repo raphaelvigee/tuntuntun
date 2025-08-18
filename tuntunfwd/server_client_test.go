@@ -27,7 +27,7 @@ func testServer(t *testing.T) *httptest.Server {
 
 func TestServerOpenSanity(t *testing.T) {
 	t.SkipNow()
-	
+
 	targetSrv := testServer(t)
 
 	ctx := t.Context()
@@ -91,6 +91,7 @@ func TestServerOpenSanity(t *testing.T) {
 			panic("should not be called")
 		}),
 	)
+	defer c.Close()
 
 	_, err = c.Start(ctx)
 	require.NoError(t, err)

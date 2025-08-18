@@ -79,6 +79,7 @@ func TestServerOpenSanity(t *testing.T) {
 			return nil
 		}),
 	)
+	defer c.Close()
 
 	_, err = c.Start(ctx)
 	require.NoError(t, err)
@@ -161,6 +162,7 @@ func TestClientOpenSanity(t *testing.T) {
 			return nil
 		}),
 	)
+	defer c.Close()
 
 	_, err = c.Start(ctx)
 	require.NoError(t, err)

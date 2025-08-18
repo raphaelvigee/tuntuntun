@@ -2,9 +2,7 @@ package tuntunfwd
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"io"
+	"log/slog"
 	"net"
 	"tuntuntun"
 	"tuntuntun/tuntunopener"
@@ -13,6 +11,7 @@ import (
 type Config struct {
 	LocalDial   func(ctx context.Context, addr string) (net.Conn, error)
 	LocalListen func(ctx context.Context, addr string) (net.Listener, error)
+	Logger      *slog.Logger
 }
 
 type Client struct {
@@ -26,7 +25,7 @@ func NewClient(cfg Config, opener tuntuntun.Opener, handler tuntunopener.PeerHan
 	return &Client{
 		cfg:    cfg,
 		onPeer: handler.OnPeer,
-		client: tuntunopener.NewClient(opener, handler),
+		client: tuntunopener.NewClient(opener, handler, tuntunopener.WithLogger(cfg.Logger)),
 	}
 }
 
@@ -43,72 +42,6 @@ func (c *Client) Start(ctx context.Context) (chan error, error) {
 	return doneCh, nil
 }
 
-func (c *Client) ClientToServer(ctx context.Context, laddr, raddr string) error {
-	err := c.client.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rconn io.ReadWriteCloser) error {
-		defer rconn.Close()
-
-		err := WriteInit(rconn, raddr)
-		if err != nil {
-			return err
-		}
-
-		lconn, err := c.cfg.LocalDial(ctx, laddr)
-		if err != nil {
-			return err
-		}
-		defer lconn.Close()
-
-		tuntuntun.BidiCopy(rconn, lconn)
-
-		return nil
-	}))
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Client) ServerToClient(ctx context.Context, laddr, raddr string) (net.Listener, error) {
-	l, err := c.cfg.LocalListen(ctx, laddr)
-	if err != nil {
-		return nil, err
-	}
-
-	go func() {
-		defer l.Close()
-
-		for {
-			lconn, err := l.Accept()
-			if err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					return
-				}
-
-				fmt.Println(err)
-				return
-			}
-
-			go func() {
-				err := c.client.Open(ctx, tuntuntun.HandlerFunc(func(ctx context.Context, rconn io.ReadWriteCloser) error {
-					defer lconn.Close()
-					defer rconn.Close()
-
-					err := WriteInit(rconn, raddr)
-					if err != nil {
-						return err
-					}
-
-					tuntuntun.BidiCopy(rconn, lconn)
-
-					return nil
-				}))
-				if err != nil {
-					fmt.Println(err)
-				}
-			}()
-		}
-	}()
-
-	return l, nil
+func (c *Client) Close() error {
+	return c.client.Close()
 }

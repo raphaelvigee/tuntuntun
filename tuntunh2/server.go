@@ -2,19 +2,33 @@ package tuntunh2
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"tuntuntun"
 )
 
-type Server struct {
-	handler tuntuntun.Handler
+type Option func(s *Server)
+
+func WithLogger(l *slog.Logger) Option {
+	return func(s *Server) {
+		s.logger = l
+	}
 }
 
-func NewServer(handler tuntuntun.Handler) *Server {
-	return &Server{
+type Server struct {
+	handler tuntuntun.Handler
+	logger  *slog.Logger
+}
+
+func NewServer(handler tuntuntun.Handler, opts ...Option) *Server {
+	s := &Server{
 		handler: handler,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +54,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	err := s.handler.ServeConn(ctx, conn)
 	if err != nil {
-		fmt.Println("h2 serve:", err)
+		if s.logger != nil {
+			s.logger.Log(ctx, slog.LevelError, "h2: failed to serve", slog.String("err", err.Error()))
+		}
 		return
 	}
 }

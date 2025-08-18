@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -54,7 +55,7 @@ func main() {
 		}
 
 		if *mux {
-			ttmux := tuntunmux.NewClient(opener)
+			ttmux := tuntunmux.NewClient(opener, tuntunmux.WithClientLogger(slog.Default()))
 			defer ttmux.Close()
 
 			opener = ttmux
@@ -67,6 +68,7 @@ func main() {
 			LocalListen: func(ctx context.Context, addr string) (net.Listener, error) {
 				return net.Listen("tcp4", addr)
 			},
+			Logger: slog.Default(),
 		}
 
 		client := tuntunfwd.NewClient(
@@ -80,6 +82,7 @@ func main() {
 				},
 			),
 		)
+		defer client.Close()
 
 		doneCh, err := client.Start(ctx)
 		if err != nil {
@@ -112,6 +115,7 @@ func main() {
 					LocalListen: func(ctx context.Context, addr string) (net.Listener, error) {
 						return net.Listen("tcp4", addr)
 					},
+					Logger: slog.Default(),
 				},
 				strings.Split(*remoteAddrs, ","),
 				func(ctx context.Context, raddr, laddr string) {
@@ -121,15 +125,15 @@ func main() {
 		})
 
 		if *mux {
-			handler = tuntunmux.NewServer(handler)
+			handler = tuntunmux.NewServer(handler, tuntunmux.WithServerLogger(slog.Default()))
 		}
 
 		var httpHandler http.Handler
 		switch *transport {
 		case "h2":
-			httpHandler = tuntunh2.NewServer(handler)
+			httpHandler = tuntunh2.NewServer(handler, tuntunh2.WithLogger(slog.Default()))
 		case "ws":
-			httpHandler = tuntunws.NewServer(handler)
+			httpHandler = tuntunws.NewServer(handler, tuntunws.WithLogger(slog.Default()))
 		default:
 			log.Fatal(fmt.Sprintf("unknown transport %q", *transport))
 		}

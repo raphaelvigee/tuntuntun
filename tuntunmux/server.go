@@ -3,28 +3,43 @@ package tuntunmux
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"tuntuntun"
 
 	"github.com/hashicorp/yamux"
 )
 
-type Server struct {
-	handler tuntuntun.Handler
+type ServerOption func(s *Server)
+
+func WithServerLogger(l *slog.Logger) ServerOption {
+	return func(s *Server) {
+		s.logger = l
+	}
 }
 
-func NewServer(h tuntuntun.Handler) *Server {
-	return &Server{
+type Server struct {
+	handler tuntuntun.Handler
+	logger  *slog.Logger
+}
+
+func NewServer(h tuntuntun.Handler, opts ...ServerOption) *Server {
+	s := &Server{
 		handler: h,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 	defer conn.Close()
 
 	cfg := yamux.DefaultConfig()
-	//cfg.Logger = something
+	cfg.Logger = logger{logger: s.logger, ctx: ctx}
+	cfg.LogOutput = nil
 
 	sess, err := yamux.Server(conn, cfg)
 	if err != nil {
@@ -58,7 +73,9 @@ func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 
 			err := s.handler.ServeConn(ctx, conn)
 			if err != nil {
-				fmt.Println("mux handle:", err)
+				if s.logger != nil {
+					s.logger.Log(ctx, slog.LevelError, "mux: failed to serve", slog.String("err", err.Error()))
+				}
 			}
 		}()
 	}
