@@ -160,6 +160,7 @@ type PeerDescriptor struct {
 
 	reqIdc     atomic.Uint64
 	reqHandler map[uint64]tuntuntun.Handler
+	ctx        context.Context
 }
 
 func (p *PeerDescriptor) Open(ctx context.Context, handler tuntuntun.Handler) error {
@@ -208,6 +209,7 @@ func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 			open: func(ctx context.Context, p *PeerDescriptor, handler tuntuntun.Handler) error {
 				return s.peerOpen(ctx, p, handler)
 			},
+			ctx: ctx,
 		}
 
 		err = json.NewEncoder(conn).Encode(&ControlMessage{
@@ -230,7 +232,9 @@ func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 			s.peersm.Unlock()
 		}()
 
-		go handler.OnPeer(ctx, peerHandle)
+		onPeerCtx, onPeerCancel := context.WithCancel(ctx)
+		defer onPeerCancel()
+		go handler.OnPeer(onPeerCtx, peerHandle)
 
 		var g errgroup.Group
 		g.Go(func() error {
@@ -253,6 +257,18 @@ func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 
 		if !ok {
 			return errors.New("unknown peer")
+		}
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		if h.ctx != nil {
+			go func() {
+				select {
+				case <-h.ctx.Done():
+					cancel() // cancel all child tuns if the control tunnel goes down
+				case <-ctx.Done():
+				}
+			}()
 		}
 
 		if reqId == 0 {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"tuntuntun"
@@ -16,33 +18,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func echo(t *testing.T) tuntuntun.HandlerFunc {
-	return func(ctx context.Context, rw io.ReadWriteCloser) error {
-		defer rw.Close()
+func echo(t *testing.T, expected string) tuntuntun.HandlerFunc {
+	return func(ctx context.Context, conn io.ReadWriteCloser) error {
+		defer conn.Close()
 
-		b, err := io.ReadAll(rw)
+		buf := make([]byte, len(expected))
+		_, err := io.ReadFull(conn, buf)
 		if err != nil {
 			return err
 		}
 
-		t.Log("SERVER RECEIVED:", len(b))
+		t.Log("SERVER RECEIVED:", len(buf))
 
-		sent := []byte("said: " + string(b))
+		sent := []byte("said: " + string(buf))
 
-		n, err := rw.Write(sent)
-		t.Log("SERVER WRITEN:", n, len(sent))
+		n, err := conn.Write(sent)
+		t.Log("SERVER WRITTEN:", n, len(sent))
 
 		return err
 	}
 }
 
-func TestSanity(t *testing.T) {
-	h := NewServer(echo(t))
+func roundtrip(t *testing.T, conn net.Conn, sent string) {
+	expected := "said: " + sent
 
+	go func() {
+		n, err := conn.Write([]byte(sent))
+		t.Log("SERVER SENT:", n, len(sent), err)
+	}()
+
+	buf := make([]byte, len(expected))
+	_, err := io.ReadFull(conn, buf)
+	require.NoError(t, err)
+
+	assert.Equal(t, expected, string(buf))
+}
+
+func newServer(h tuntuntun.Handler) http.Handler {
 	h2s := &http2.Server{
 		MaxConcurrentStreams: 250,
 	}
-	srv := httptest.NewServer(h2c.NewHandler(h, h2s))
+
+	hh := NewServer(h)
+
+	return h2c.NewHandler(hh, h2s)
+}
+
+func TestSanity(t *testing.T) {
+	toWrite := "hello"
+
+	h := newServer(echo(t, toWrite))
+
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
 	t.Log("URL", srv.URL)
@@ -51,34 +78,12 @@ func TestSanity(t *testing.T) {
 
 	conn, _, err := c.Connect(t.Context())
 	require.NoError(t, err)
+	defer conn.Close()
 
-	go func() {
-		_, _ = conn.Write([]byte("hello"))
-		_ = conn.Close()
-	}()
-
-	b, err := io.ReadAll(conn)
-	require.NoError(t, err)
-
-	assert.Equal(t, "said: hello", string(b))
+	roundtrip(t, conn, toWrite)
 }
 
 func TestSanityLarge(t *testing.T) {
-	h := NewServer(echo(t))
-
-	h2s := &http2.Server{
-		MaxConcurrentStreams: 250,
-	}
-	srv := httptest.NewServer(h2c.NewHandler(h, h2s))
-	t.Cleanup(srv.Close)
-
-	t.Log("URL", srv.URL)
-
-	c := NewClient(srv.URL)
-
-	conn, _, err := c.Connect(t.Context())
-	require.NoError(t, err)
-
 	sent := ""
 	for i := range 1024 {
 		if sent != "" {
@@ -87,25 +92,28 @@ func TestSanityLarge(t *testing.T) {
 		sent += fmt.Sprint(i)
 	}
 
-	go func() {
-		n, err := conn.Write([]byte(sent))
-		t.Log("CLIENT WRITTEN:", n, err, len(sent))
-		_ = conn.Close()
-	}()
+	h := newServer(echo(t, sent))
 
-	b, err := io.ReadAll(conn)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	t.Log("URL", srv.URL)
+
+	c := NewClient(srv.URL)
+
+	conn, _, err := c.Connect(t.Context())
 	require.NoError(t, err)
+	defer conn.Close()
 
-	assert.Equal(t, "said: "+sent, string(b))
+	roundtrip(t, conn, sent)
 }
 
 func TestStress(t *testing.T) {
-	h := NewServer(echo(t))
+	toWrite := "hello"
 
-	h2s := &http2.Server{
-		MaxConcurrentStreams: 250,
-	}
-	srv := httptest.NewServer(h2c.NewHandler(h, h2s))
+	h := newServer(echo(t, toWrite))
+
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
 	var g errgroup.Group
@@ -115,16 +123,9 @@ func TestStress(t *testing.T) {
 
 			conn, _, err := c.Connect(t.Context())
 			require.NoError(t, err)
+			defer conn.Close()
 
-			go func() {
-				_, _ = conn.Write([]byte("hello"))
-				_ = conn.Close()
-			}()
-
-			b, err := io.ReadAll(conn)
-			require.NoError(t, err)
-
-			assert.Equal(t, "said: hello", string(b))
+			roundtrip(t, conn, toWrite)
 
 			return nil
 		})

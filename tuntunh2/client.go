@@ -31,26 +31,17 @@ type Client struct {
 func (c *Client) Connect(ctx context.Context) (net.Conn, *http.Response, error) {
 	reader, writer := io.Pipe()
 
-	// Create a request object to send to the server
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, reader)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Apply given context to the sent request
-	req = req.WithContext(ctx)
-
-	// Perform the request
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Create a connection
-	conn, ctx := newConn(req.Context(), resp.Body, writer)
-
-	// Apply the connection context on the request context
-	resp.Request = req.WithContext(ctx)
+	conn := newConn(resp.Body, writer)
 
 	return conn, resp, nil
 }

@@ -1,35 +1,46 @@
 package tuntunh2
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"tuntuntun"
 )
 
 type Server struct {
-	Upgrader Upgrader
-	handler  tuntuntun.Handler
+	handler tuntuntun.Handler
 }
 
 func NewServer(handler tuntuntun.Handler) *Server {
 	return &Server{
 		handler: handler,
-		Upgrader: Upgrader{
-			StatusCode: http.StatusOK,
-		},
 	}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.Upgrader.Accept(w, r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if !r.ProtoAtLeast(2, 0) {
+		http.Error(w, "unsupported proto", http.StatusBadRequest)
 		return
 	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "unsupported writer", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	conn := newConn(r.Body, &responseWriterCloser{ResponseWriter: w, close: cancel, f: flusher})
 	defer conn.Close()
 
-	err = s.handler.ServeConn(r.Context(), conn)
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	err := s.handler.ServeConn(ctx, conn)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fmt.Println("h2 serve:", err)
 		return
 	}
 }

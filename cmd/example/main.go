@@ -34,7 +34,7 @@ func main() {
 	switch args[0] {
 	case "client":
 		addr := flag.String("addr", "https://localhost:1234", "server address")
-		transport := flag.String("transport", "h2", "http transport [h2, ws]")
+		transport := flag.String("transport", "ws", "http transport [ws, h2]")
 		mux := flag.Bool("mux", true, "enable mux")
 		flag.CommandLine.Parse(args[1:])
 
@@ -94,7 +94,7 @@ func main() {
 		addr := flag.String("addr", ":1234", "http server address")
 		allowForward := flag.Bool("allow-forward", false, "allow forwarding request")
 		remoteAddrs := flag.String("remote-addrs", "", "comma-separated addresses to request forwarding")
-		transport := flag.String("transport", "h2", "http transport [h2, ws]")
+		transport := flag.String("transport", "ws", "http transport [ws, h2]")
 		mux := flag.Bool("mux", true, "enable mux")
 		flag.CommandLine.Parse(args[1:])
 

@@ -1,63 +1,89 @@
 package tuntunh2
 
 import (
-	"context"
+	"errors"
 	"io"
 	"net"
 	"time"
 )
 
+type h2Addr struct {
+}
+
+func (a h2Addr) Network() string {
+	return "h2"
+}
+
+func (a h2Addr) String() string {
+	return "h2/unknown-addr"
+}
+
 type Conn struct {
-	r  io.Reader
-	wc io.WriteCloser
-
-	cancel context.CancelFunc
-}
-
-func (c *Conn) LocalAddr() net.Addr {
-	panic("implement me")
-}
-
-func (c *Conn) RemoteAddr() net.Addr {
-	panic("implement me")
-}
-
-func (c *Conn) SetDeadline(t time.Time) error {
-	return nil
-}
-
-func (c *Conn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (c *Conn) SetWriteDeadline(t time.Time) error {
-	return nil
+	r io.ReadCloser
+	w io.WriteCloser
 }
 
 var _ net.Conn = (*Conn)(nil)
 
-func newConn(ctx context.Context, r io.Reader, wc io.WriteCloser) (*Conn, context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
-
+func newConn(r io.ReadCloser, wc io.WriteCloser) *Conn {
 	return &Conn{
-		r:      r,
-		wc:     wc,
-		cancel: cancel,
-	}, ctx
+		r: r,
+		w: wc,
+	}
 }
 
-// Write writes data to the connection
+func (c *Conn) LocalAddr() net.Addr {
+	return h2Addr{}
+}
+
+func (c *Conn) RemoteAddr() net.Addr {
+	return h2Addr{}
+}
+
+func (c *Conn) SetDeadline(t time.Time) error {
+	if c, ok := c.w.(interface {
+		SetDeadline(deadline time.Time) error
+	}); ok {
+		return c.SetDeadline(t)
+	}
+
+	err1 := c.SetReadDeadline(t)
+	err2 := c.SetWriteDeadline(t)
+
+	return errors.Join(err1, err2)
+}
+
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	if c, ok := c.w.(interface {
+		SetReadDeadline(deadline time.Time) error
+	}); ok {
+		return c.SetReadDeadline(t)
+	}
+
+	return nil
+}
+
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	if c, ok := c.w.(interface {
+		SetWriteDeadline(deadline time.Time) error
+	}); ok {
+		return c.SetWriteDeadline(t)
+	}
+
+	return nil
+}
+
 func (c *Conn) Write(data []byte) (int, error) {
-	return c.wc.Write(data)
+	return c.w.Write(data)
 }
 
-// Read reads data from the connection
 func (c *Conn) Read(data []byte) (int, error) {
 	return c.r.Read(data)
 }
 
-// Close closes the connection
 func (c *Conn) Close() error {
-	c.cancel()
-	return c.wc.Close()
+	err1 := c.r.Close()
+	err2 := c.w.Close()
+
+	return errors.Join(err1, err2)
 }

@@ -32,6 +32,14 @@ func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 	}
 	defer sess.Close()
 
+	go func() {
+		select {
+		case <-ctx.Done():
+			sess.Close()
+		case <-sess.CloseChan():
+		}
+	}()
+
 	for {
 		conn, err := sess.AcceptStreamWithContext(ctx)
 		if err != nil {
@@ -44,6 +52,9 @@ func (s *Server) ServeConn(ctx context.Context, conn io.ReadWriteCloser) error {
 
 		go func() {
 			defer conn.Close()
+
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
 
 			err := s.handler.ServeConn(ctx, conn)
 			if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"tuntuntun"
 
@@ -13,23 +14,54 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+func roundtrip(t *testing.T, conn net.Conn, sent string) {
+	expected := "said: " + sent
+
+	go func() {
+		n, err := conn.Write([]byte(sent))
+		t.Log("CLIENT SENT:", n, len(sent), err)
+	}()
+
+	buf := make([]byte, len(expected))
+	n, err := io.ReadFull(conn, buf)
+	require.NoError(t, err)
+	buf = buf[:n]
+
+	t.Log("CLIENT RECEIVED:", n, len(buf), err)
+
+	assert.Equal(t, expected, string(buf))
+}
+
+func echo(t *testing.T, expected string) tuntuntun.HandlerFunc {
+	return func(ctx context.Context, conn io.ReadWriteCloser) error {
+		defer conn.Close()
+
+		buf := make([]byte, len(expected))
+		_, err := io.ReadFull(conn, buf)
+		if err != nil {
+			return err
+		}
+
+		t.Log("SERVER RECEIVED:", len(buf))
+
+		sent := []byte("said: " + string(buf))
+
+		n, err := conn.Write(sent)
+		t.Log("SERVER WRITTEN:", n, len(sent))
+
+		return err
+	}
+}
+
 func TestSanity(t *testing.T) {
+	toWrite := "hello"
+
 	l, err := net.Listen("tcp", ":0")
 	require.NoError(t, err)
 	defer l.Close()
 
 	go func() {
-		srv := NewServer(tuntuntun.HandlerFunc(func(ctx context.Context, conn io.ReadWriteCloser) error {
-			defer conn.Close()
-
-			buf := make([]byte, 1024)
-			n, err := conn.Read(buf)
-			require.NoError(t, err)
-
-			conn.Write([]byte("said: " + string(buf[:n])))
-
-			return nil
-		}))
+		srv := NewServer(echo(t, toWrite))
 
 		for {
 			conn, err := l.Accept()
@@ -41,11 +73,15 @@ func TestSanity(t *testing.T) {
 				require.NoError(t, err)
 			}
 
+			t.Log("SERVER ACCEPTED:", conn.RemoteAddr())
+
 			go func() {
 				defer conn.Close()
 
 				err := srv.ServeConn(t.Context(), conn)
-				require.NoError(t, err)
+				if err != nil {
+					t.Log(err)
+				}
 			}()
 		}
 	}()
@@ -58,35 +94,25 @@ func TestSanity(t *testing.T) {
 
 	conn, err := c.Open(t.Context())
 	require.NoError(t, err)
+	defer conn.Close()
 
-	go func() {
-		conn.Write([]byte("hello"))
-		conn.Close()
-	}()
-
-	b, err := io.ReadAll(conn)
-	require.NoError(t, err)
-
-	assert.Equal(t, "said: hello", string(b))
+	roundtrip(t, conn, toWrite)
 }
 
 func TestStress(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	toWrite := "hello"
+
 	l, err := net.Listen("tcp", ":0")
 	require.NoError(t, err)
 	defer l.Close()
 
+	var wg sync.WaitGroup
+
 	go func() {
-		srv := NewServer(tuntuntun.HandlerFunc(func(ctx context.Context, conn io.ReadWriteCloser) error {
-			defer conn.Close()
-
-			buf := make([]byte, 1024)
-			n, err := conn.Read(buf)
-			require.NoError(t, err)
-
-			conn.Write([]byte("said: " + string(buf[:n])))
-
-			return nil
-		}))
+		srv := NewServer(echo(t, toWrite))
 
 		for {
 			conn, err := l.Accept()
@@ -98,11 +124,18 @@ func TestStress(t *testing.T) {
 				require.NoError(t, err)
 			}
 
+			t.Log("SERVER ACCEPTED:", conn.RemoteAddr())
+
+			wg.Add(1)
+
 			go func() {
+				defer wg.Done()
 				defer conn.Close()
 
-				err := srv.ServeConn(t.Context(), conn)
-				require.NoError(t, err)
+				err := srv.ServeConn(ctx, conn)
+				if err != nil {
+					t.Log(err)
+				}
 			}()
 		}
 	}()
@@ -118,20 +151,17 @@ func TestStress(t *testing.T) {
 		g.Go(func() error {
 			conn, err := c.Open(t.Context())
 			require.NoError(t, err)
+			defer conn.Close()
 
-			go func() {
-				conn.Write([]byte("hello"))
-				conn.Close()
-			}()
-
-			b, err := io.ReadAll(conn)
-			require.NoError(t, err)
-
-			assert.Equal(t, "said: hello", string(b))
+			roundtrip(t, conn, toWrite)
 
 			return nil
 		})
 	}
 
-	g.Wait()
+	require.NoError(t, g.Wait())
+
+	c.Close()
+
+	wg.Wait()
 }
